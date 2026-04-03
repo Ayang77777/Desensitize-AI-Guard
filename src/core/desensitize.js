@@ -166,25 +166,15 @@ export function maskMedicalRecord(v) { return '病历号_' + sha8(v).slice(0, 6)
 export function maskSocialSecurity(v){ return '社保_' + sha8(v).slice(0, 6) }
 
 // ── 文本预处理（normalize）────────────────────────────────────────────────────
-/**
- * normalizeText：把"格式噪音"清除，让正则能命中原本因排版问题漏掉的内容
- *
- * 处理内容：
- *   1. 全角数字/字母/符号 → 半角（Ａ→A、１→1、：→:、－→-）
- *   2. 全角空格 → 普通空格
- *   3. 换行符（\r\n / \n / \r）→ 单个空格
- *   4. 连续空白 → 单个空格
- *   5. 首尾空白去除
- *
- * 注意：只用于"二次扫描"，原始文本保持不变，脱敏结果取两次扫描的并集。
- */
-export function normalizeText(text) {
+// 注意：此函数目前未被 desensitize 主流程调用（已移除二次扫描），
+// 保留备用。如将来需要在特定规则中做 normalize，可直接使用。
+function normalizeText(text) {
   return text
-    // 全角 → 半角（数字、大小写字母、常用符号）
-    .replace(/[\uff01-\uff5e]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
-    // 全角空格
+    // 全角数字 → 半角（０→0, ..., ９→9）
+    .replace(/[\uff10-\uff19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    // 全角空格 → 普通空格
     .replace(/\u3000/g, ' ')
-    // 各种换行 → 空格
+    // 换行 → 空格
     .replace(/\r\n|\r|\n/g, ' ')
     // 连续空白 → 单空格
     .replace(/\s{2,}/g, ' ')
@@ -290,7 +280,7 @@ export const CSV_COLUMN_RULES = [
 
 // ── 列名归一化 ────────────────────────────────────────────────────────────────
 
-export function normalizeColName(n) { return n.toLowerCase().replace(/[\s_\-\u3000\uff01-\uff5e]/g, '') }
+export function normalizeColName(n) { return n.toLowerCase().replace(/[\s_\-\u3000\uff10-\uff19]/g, '') }
 
 /**
  * 列名同义词扩展表
@@ -868,58 +858,20 @@ export function mightContainSensitiveData(text) {
 /**
  * desensitize(text)
  *
- * 两轮扫描策略：
- *
- *   第一轮：对原始文本直接跑正则（保留原始格式）
- *
- *   第二轮：对 normalizeText(原文) 跑正则
- *     - 全角→半角、换行→空格、压缩空白
- *     - 专门捕获因排版噪音导致第一轮漏掉的内容
- *
- *   取舍规则：
- *     - 若两轮命中数相同 → 用第一轮结果（保留原始格式）
- *     - 若第二轮命中更多 → 用第二轮结果（格式已 normalize，但脱敏更彻底）
- *     - 两轮共享同一个 ctx，保证映射一致性（同一个人名始终映射同一个假名）
+ * 单次扫描策略：对原始文本直接跑正则，保留原始格式。
+ * 如需处理全角数字，可在特定规则中单独调用 normalizeText。
  */
 export function desensitize(text) {
   const ctx = makeCtx()
 
-  // ── 第一轮：原文扫描 ──────────────────────────────────────────────────────
-  let result1
   if (looksLikeCsv(text)) {
     const csvResult = desensitizeCsv(text, ctx)
-    result1 = csvResult !== null
+    const result = csvResult !== null
       ? applyRegexRules(csvResult, ctx)
       : applyRegexRules(text, ctx)
-    // CSV 模式不做二次扫描（列名精准模式已足够）
-    return { result: result1, stats: ctx.stats }
+    return { result, stats: ctx.stats }
   }
 
-  result1 = applyRegexRules(text, ctx)
-  const hitCount1 = Object.values(ctx.stats).reduce((a, b) => a + b, 0)
-
-  // ── 第二轮：normalize 后补扫 ──────────────────────────────────────────────
-  const normalized = normalizeText(text)
-  if (normalized === text) {
-    // 文本本身没有全角/换行噪音，无需二次扫描
-    return { result: result1, stats: ctx.stats }
-  }
-
-  // 用同一个 ctx（共享映射），但先备份 stats
-  const statsBackup = { ...ctx.stats }
-  ctx.stats = {}
-  const result2 = applyRegexRules(normalized, ctx)
-  const hitCount2 = Object.values(ctx.stats).reduce((a, b) => a + b, 0)
-
-  if (hitCount2 > hitCount1) {
-    // 第二轮命中更多：合并 stats，输出第二轮结果
-    for (const [k, v] of Object.entries(statsBackup)) {
-      ctx.stats[k] = (ctx.stats[k] ?? 0) + v
-    }
-    return { result: result2, stats: ctx.stats }
-  } else {
-    // 第一轮已足够：恢复 stats，输出第一轮结果
-    ctx.stats = statsBackup
-    return { result: result1, stats: ctx.stats }
-  }
+  const result = applyRegexRules(text, ctx)
+  return { result, stats: ctx.stats }
 }

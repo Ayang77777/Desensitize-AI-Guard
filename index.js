@@ -74,6 +74,7 @@ export function register(api) {
 
   const port           = pluginConfig.port           ?? 47291
   const blockOnFailure = pluginConfig.blockOnFailure ?? true
+  const skipPrefix     = pluginConfig.skipPrefix     ?? '[skip-guard]'
   const fileGuardEnabled = pluginConfig.fileGuard    ?? true
 
   const openclawDir     = getOpenClawDir()
@@ -88,7 +89,7 @@ export function register(api) {
     proxyScriptPath:  proxyScript,
     openclawJsonPath: openclawJson,
   })
-  proxyPlugin.register(api, { port, blockOnFailure }, logger)
+  proxyPlugin.register(api, { port, blockOnFailure, skipPrefix }, logger)
 
   // ── 层 2：注册文件脱敏插件（工具调用层）──────────────────────────────────
   if (!fileGuardEnabled) {

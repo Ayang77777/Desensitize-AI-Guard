@@ -1,0 +1,50 @@
+{
+  "id": "data-guard",
+  "name": "Data Guard",
+  "version": "2.0.3",
+  "description": "双层数据脱敏插件：① HTTP 代理层——在请求发往 AI 前自动脱敏 messages 中的敏感信息（手机号、身份证、邮箱、银行卡等），以本地反向代理方式运行，数据不离开本机；② 工具调用层——在 AI 读取 CSV/XLSX/XLS 文件前按列名精准脱敏，同时拦截消息中粘贴的敏感文本。融合自 data-guard-proxy v2.2 + file-guard v1.1。",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "port": {
+        "type": "integer",
+        "description": "HTTP 代理监听端口，默认 47291",
+        "default": 47291,
+        "minimum": 1024,
+        "maximum": 65535
+      },
+      "blockOnFailure": {
+        "type": "boolean",
+        "description": "脱敏脚本失败时是否阻断请求（true=阻断，false=透传原文），默认 true",
+        "default": true
+      },
+      "fileGuard": {
+        "type": "boolean",
+        "description": "是否启用工具调用层文件脱敏（CSV/XLSX/XLS），默认 true",
+        "default": true
+      },
+      "skipPrefix": {
+        "type": "string",
+        "description": "消息开头加此前缀可跳过消息文本脱敏，默认 [skip-guard]",
+        "default": "[skip-guard]"
+      }
+    }
+  },
+  "uiHints": {
+    "port": {
+      "label": "HTTP 代理监听端口",
+      "placeholder": "47291"
+    },
+    "blockOnFailure": {
+      "label": "脱敏失败时阻断请求"
+    },
+    "fileGuard": {
+      "label": "启用文件脱敏（CSV/XLSX/XLS）"
+    },
+    "skipPrefix": {
+      "label": "跳过脱敏的消息前缀",
+      "placeholder": "[skip-guard]"
+    }
+  }
+}

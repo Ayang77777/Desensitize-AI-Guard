@@ -107,7 +107,6 @@ export class ProxyPlugin extends Plugin {
   register(api, config, logger) {
     const port           = config.port           ?? 47291
     const blockOnFailure = config.blockOnFailure ?? true
-    const skipPrefix     = config.skipPrefix     ?? '[skip-guard]'
 
     // 验证脚本文件存在
     if (!existsSync(this.proxyScriptPath)) {
@@ -139,7 +138,6 @@ export class ProxyPlugin extends Plugin {
           ...process.env,
           DATA_GUARD_PORT:             String(port),
           DATA_GUARD_BLOCK_ON_FAILURE: String(blockOnFailure),
-          DATA_GUARD_SKIP_PREFIX:     skipPrefix,
         }
 
         this._proc = spawn(process.execPath, [this.proxyScriptPath], {

@@ -158,13 +158,11 @@ export class ProxyServer {
    * @param {object} options
    * @param {number}  [options.port=47291]           - 监听端口
    * @param {boolean} [options.blockOnFailure=true]  - 脱敏失败时是否阻断请求
-   * @param {string}  [options.skipPrefix='[skip-guard]'] - 跳过脱敏的前缀
    * @param {string}  [options.logFile]              - 日志文件路径
    */
   constructor(options = {}) {
     this.port           = options.port           ?? DEFAULT_PORT
     this.blockOnFailure = options.blockOnFailure ?? DEFAULT_BLOCK_ON_FAIL
-    this.skipPrefix     = options.skipPrefix     ?? '[skip-guard]'
     this.logFile        = options.logFile        ?? null
     this._server        = null
     this._logger        = options.logFile ? createLogger(options.logFile) : null
@@ -244,34 +242,6 @@ export class ProxyServer {
         this._log('warn', '请求体解析失败，直接透传')
         forwardRequest(target, req.method, req.headers, rawBody, res)
         return
-      }
-
-      // ── [skip-guard] 跳过逻辑 ─────────────────────────────────────────────
-      if (this.skipPrefix) {
-        const messages = parsed.messages ?? []
-        const hasSkip = messages.some(msg =>
-          msg.role === 'user' &&
-          typeof msg.content === 'string' &&
-          msg.content.startsWith(this.skipPrefix)
-        )
-        if (hasSkip) {
-          // 去掉所有 user 消息中的 skip 前缀，透传原文不脱敏
-          let skippedCount = 0
-          if (Array.isArray(parsed.messages)) {
-            parsed.messages = parsed.messages.map(msg => {
-              if (msg.role === 'user' && typeof msg.content === 'string' && msg.content.startsWith(this.skipPrefix)) {
-                msg = { ...msg, content: msg.content.slice(this.skipPrefix.length) }
-                skippedCount++
-              }
-              return msg
-            })
-          }
-          const newBody = Buffer.from(JSON.stringify(parsed), 'utf8')
-          const newHeaders = { ...req.headers, 'content-length': String(newBody.length) }
-          this._log('info', `skip-guard: skipped ${skippedCount} message(s) (${this.skipPrefix})`)
-          forwardRequest(target, req.method, newHeaders, newBody, res)
-          return
-        }
       }
 
       // 递归脱敏整个请求体

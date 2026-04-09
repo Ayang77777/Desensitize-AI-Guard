@@ -83,23 +83,6 @@
 
 When reading CSV or Excel files, Data Guard identifies sensitive columns by **header name** and applies the appropriate mask — not a blanket regex. Context-aware inference handles variant column names like `联系方式2`, `备用手机号`, `操作员`.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Input (AI never sees this)                                  │
-├─────────────────────────────────────────────────────────────┤
-│  姓名,手机号,身份证号,银行卡号,邮箱                          │
-│  张明伟,13812345678,110101199001011234,6222000000001234,z@eg.com │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Output (what the AI receives)                               │
-├─────────────────────────────────────────────────────────────┤
-│  姓名,手机号,身份证号,银行卡号,邮箱                          │
-│  用户_a3f2,138****5678,110***********1234,6222**********0123,z***@eg.com │
-└─────────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## 🚀 Quick Start
@@ -158,11 +141,7 @@ The proxy runs as a **child process** of the gateway. Two mechanisms ensure it n
 
 ## ⏭️ Skipping Desensitization
 
-To send a message **without** Layer 1 text desensitization, prefix it with `[skip-guard]` (configurable):
-
-```
-[skip-guard] This message goes through without L1 masking.
-```
+To send a message **without** Layer 1 text desensitization, prefix it with `[skip-guard]` (configurable).
 
 > ⚠️ Layers 2, 3, and 4 (file / Python / Shell exec) are **unaffected** by this prefix.
 
@@ -225,63 +204,17 @@ data-guard/
 
 ## 🛠️ Extending Data Guard
 
-### Adding a new file format
-
-```js
-import { FileFormat } from 'data-guard/plugins/tool/formats/FileFormat'
-import { registry }   from 'data-guard/plugins/tool/formats'
-
-class OdsFormat extends FileFormat {
-  get extensions() { return ['.ods'] }
-  parse(buffer)    { /* return { sheets: [{ name, rows }] } */ }
-}
-
-registry.register(new OdsFormat())
-// FileDesensitizePlugin will automatically handle .ods files
-```
-
-### Adding a new exec plugin
-
-```js
-import { ToolPlugin } from 'data-guard/plugins/base/ToolPlugin'
-
-class RustExecPlugin extends ToolPlugin {
-  get id()             { return 'rust-exec-desensitize' }
-  get name()           { return 'Rust Exec Desensitization' }
-  get supportedTools() { return ['exec', 'process'] }
-
-  handleToolCall(toolName, params, config, logger) {
-    const cmd = params?.command ?? ''
-    if (!cmd.includes('cargo run') && !cmd.includes('rustc')) return
-    // apply path desensitization...
-  }
-}
-```
+Data Guard supports extending with custom file formats and exec plugins. See the source code in `src/plugins/` for implementation patterns.
 
 ---
 
 ## 🔧 Troubleshooting
 
-**Port 47291 already in use**
-```bash
-lsof -i :47291        # find the process
-kill <PID>            # kill it
-openclaw gateway restart
-```
-> In v2.2.1, stale proxy processes are automatically cleaned up on every `start()`. This should rarely be needed.
+**Port 47291 already in use** — In v2.2.1, stale proxy processes are automatically cleaned up on every `start()`. If needed, use `lsof -i :47291` to find and kill the process, then restart the gateway.
 
-**Plugin not loading**
-```bash
-openclaw plugins list
-openclaw plugins uninstall data-guard --force
-openclaw plugins install data-guard-2.2.1.tgz
-openclaw gateway restart
-```
+**Plugin not loading** — Try reinstalling: `openclaw plugins uninstall data-guard --force` then `openclaw plugins install data-guard-2.2.1.tgz`.
 
-**Check proxy logs**
-```bash
-tail -f ~/.openclaw/data-guard/proxy.log
-```
+**Check proxy logs** — `tail -f ~/.openclaw/data-guard/proxy.log`
 
 **Shell exec layer not triggering**
 

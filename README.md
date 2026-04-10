@@ -3,11 +3,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-2.2.1-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/Version-2.3.0-blue?style=flat-square" />
   <img src="https://img.shields.io/badge/Plugin_ID-data--guard-blue?style=flat-square" />
   <img src="https://img.shields.io/badge/Engine-Pure_Node.js--zero_deps-green?style=flat-square" />
   <img src="https://img.shields.io/badge/Platform-macOS_Linux_Windows-black?style=flat-square" />
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" />
+  <img src="https://img.shields.io/badge/Encryption-AES_256_GCM-blue?style=flat-square" />
 </p>
 
 ---
@@ -30,11 +31,12 @@ When using **OpenClaw** 🦞 to invoke external LLMs (GPT-4, Claude, DeepSeek, e
 
 | | |
 |:---|:---|
-| **版本 Version** | 2.2.1 |
+| **版本 Version** | 2.3.0 |
 | **插件 ID Plugin ID** | `data-guard` |
 | **引擎 Engine** | Pure Node.js — 零外部依赖 zero external dependencies |
 | **平台 Platform** | macOS · Linux · Windows |
 | **许可证 License** | MIT |
+| **加密 Encryption** | AES-256-GCM 可逆加密 / Reversible Encryption |
 
 ---
 
@@ -135,6 +137,87 @@ The proxy runs as a **child process** of the gateway. Two mechanisms ensure it n
 | ❤️ **心跳检测 Heartbeat** | 代理 Proxy | 每 5 秒检测父进程，父进程消失则自动退出 Every 5s checks parent via `process.kill(ppid, 0)`. Shuts down if parent is gone. |
 | 🧹 **PID 清理 PID Cleanup** | 插件 Plugin | 每次 `start()` 杀死残留进程 On every `start()`, kills stale process before spawning a new one. |
 | 🗑️ **旧版本清理 Legacy Cleanup** | 插件 Plugin | 每次 `register()` 移除旧版本钩子 On every `register()`, removes hooks from older Data Guard versions. |
+
+---
+
+## 🔐 统一加密入口 | Unified Encryption Entry
+
+**v2.3.0 新增** — 所有输入输出现在都通过统一加密入口处理：
+
+**NEW in v2.3.0** — All input/output now goes through a unified encryption gateway:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        UnifiedEncryptionGuard                           │
+│                         统一加密入口                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Input (输入)                                                           │
+│    ├── HTTP 请求体 Request Body                                         │
+│    ├── 文件内容 File Content (CSV/XLSX/DOCX/PDF...)                    │
+│    ├── Python exec 命令 Python Commands                                 │
+│    └── Shell exec 命令 Shell Commands                                   │
+│                              │                                          │
+│                              ▼                                          │
+│                    ┌─────────────────┐                                  │
+│                    │  encryptInput() │                                  │
+│                    │   统一加密入口   │                                  │
+│                    └────────┬────────┘                                  │
+│                             │                                           │
+│              ┌──────────────┼──────────────┐                           │
+│              ▼              ▼              ▼                           │
+│        ┌─────────┐   ┌──────────┐   ┌──────────┐                      │
+│        │  Block  │   │Reversible│   │  Pass    │                      │
+│        │  阻断   │   │  加密    │   │  放行    │                      │
+│        └────┬────┘   └────┬─────┘   └────┬─────┘                      │
+│             │             │              │                             │
+│             ▼             ▼              ▼                             │
+│        [拦截请求]    [加密后放行]    [无敏感数据]                       │
+│                                                               │        │
+│              LLM 处理 / LLM Processing                        │        │
+│                                                               ▼        │
+│                                                    ┌──────────────┐    │
+│                                                    │decryptOutput()│    │
+│                                                    │  统一解密出口  │    │
+│                                                    └──────────────┘    │
+│                                                           │            │
+│  Output (输出)                                            ▼            │
+│    └── 解密后的响应 Decrypted Response ◄────────────────────┘           │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 两种工作模式 | Two Operation Modes
+
+| 模式 Mode | 处理方式 Handling | 适用场景 Use Case |
+|:----------|:------------------|:------------------|
+| **拦截阻断 Block** | 检测到敏感数据后直接拦截请求 | 极高保密要求、不可接受数据外泄的场景 |
+| **可逆加密 Reversible** | AES-256-GCM 加密敏感数据后放行，LLM 返回后解密还原 | 需要 LLM 处理复杂任务、注重用户体验的场景 |
+
+### 配置方式 | Configuration
+
+```javascript
+// 通过环境变量配置 | Via environment variables
+export DATA_GUARD_MODE=reversible              # block | reversible
+export DATA_GUARD_ENCRYPTION_PASSWORD=your-key  # 加密密钥
+
+// 或在代码中 | Or in code
+import { UnifiedEncryptionGuard } from './src/core/UnifiedEncryptionGuard.js';
+
+const guard = new UnifiedEncryptionGuard({
+  mode: 'reversible',                          // 'block' | 'reversible'
+  encryptionPassword: 'your-secure-password',
+  blockOnFailure: true,
+  enabledTypes: ['email', 'phone', 'idCard', 'bankCard', 'ipAddress', 'apiKey']
+});
+
+// 统一入口加密 | Unified encryption entry
+const result = guard.encryptInput(data, { source: 'http' });
+if (!result.allowed) {
+  console.log('Blocked:', result.reason);
+}
+
+// 统一出口解密 | Unified decryption exit
+const decrypted = guard.decryptOutput(llmResponse, { source: 'http-response' });
+```
 
 ---
 

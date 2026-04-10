@@ -7,6 +7,8 @@
   "exports": {
     ".": "./index.js",
     "./core/desensitize": "./src/core/desensitize.js",
+    "./core/UnifiedEncryptionGuard": "./src/core/UnifiedEncryptionGuard.js",
+    "./reversible-guard": "./reversible-guard.js",
     "./plugins/base/Plugin": "./src/plugins/base/Plugin.js",
     "./plugins/base/ToolPlugin": "./src/plugins/base/ToolPlugin.js",
     "./plugins/tool/formats": "./src/plugins/tool/formats/index.js",
@@ -16,6 +18,7 @@
     "./plugins/tool/formats/XlsFormat": "./src/plugins/tool/formats/XlsFormat.js",
     "./plugins/tool/FileDesensitizePlugin": "./src/plugins/tool/FileDesensitizePlugin.js",
     "./plugins/exec/PythonExecPlugin": "./src/plugins/exec/PythonExecPlugin.js",
+    "./plugins/exec/ShellExecPlugin": "./src/plugins/exec/ShellExecPlugin.js",
     "./migrate/cleanLegacy": "./src/migrate/cleanLegacy.js",
     "./plugins/ProxyPlugin": "./src/plugins/ProxyPlugin.js",
     "./input/FileReader": "./src/input/FileReader.js",

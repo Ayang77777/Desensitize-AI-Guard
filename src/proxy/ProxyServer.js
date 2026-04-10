@@ -22,11 +22,12 @@ import https from 'https'
 import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import { join }    from 'path'
-import { desensitize } from '../core/desensitize.js'
+import { UnifiedEncryptionGuard } from '../core/UnifiedEncryptionGuard.js'
 
 // ── 配置 ──────────────────────────────────────────────────────────────────────
 
 const DEFAULT_PORT           = 47291
+const DEFAULT_MODE           = process.env.DATA_GUARD_MODE || 'block'  // 'block' | 'reversible'
 const DEFAULT_BLOCK_ON_FAIL  = true
 
 // ── 日志工厂 ──────────────────────────────────────────────────────────────────
@@ -86,38 +87,20 @@ function resolveTarget(reqUrl) {
 // ── 脱敏核心 ──────────────────────────────────────────────────────────────────
 
 /**
- * 递归遍历任意 JSON 对象，对所有字符串值执行脱敏
- * 兼容所有模型格式：OpenAI messages、Anthropic messages/system、
- * 旧版 prompt、HuggingFace inputs、MiniMax、Qwen 等
- *
- * @param {*} obj
- * @param {{ n: number, types: Record<string,number> }} counter
- * @returns {*}
+ * 创建统一加密守卫实例
+ * 根据环境变量配置模式：block（阻断）或 reversible（可逆加密）
  */
-function desensitizeBody(obj, counter) {
-  if (typeof obj === 'string') {
-    // 不做 mightContainSensitiveData 前置过滤：
-    // 单个字段值脱离上下文时快速检测容易漏判（如孤立的出生日期、座机号等）。
-    // desensitize() 内部本身有快速路径，无命中时直接返回原值，性能影响可忽略。
-    const { result, stats } = desensitize(obj)
-    const total = Object.values(stats).reduce((a, b) => a + b, 0)
-    if (total > 0) {
-      counter.n += total
-      counter.types = counter.types ?? {}
-      for (const [k, v] of Object.entries(stats)) {
-        counter.types[k] = (counter.types[k] ?? 0) + v
-      }
-      return result
-    }
-    return obj
-  }
-  if (Array.isArray(obj)) return obj.map(item => desensitizeBody(item, counter))
-  if (obj !== null && typeof obj === 'object') {
-    const out = {}
-    for (const [key, val] of Object.entries(obj)) out[key] = desensitizeBody(val, counter)
-    return out
-  }
-  return obj
+function createGuard(logger) {
+  const mode = process.env.DATA_GUARD_MODE || DEFAULT_MODE;
+  const password = process.env.DATA_GUARD_ENCRYPTION_PASSWORD || 'openclaw-data-guard-key';
+  
+  return new UnifiedEncryptionGuard({
+    mode,
+    encryptionPassword: password,
+    blockOnFailure: process.env.DATA_GUARD_BLOCK_ON_FAILURE !== 'false',
+    enabledTypes: ['email', 'phone', 'idCard', 'bankCard', 'ipAddress', 'apiKey'],
+    logger
+  });
 }
 
 // ── HTTP 转发 ─────────────────────────────────────────────────────────────────
@@ -151,6 +134,68 @@ function forwardRequest(target, reqMethod, reqHeaders, body, res) {
   upstreamReq.end()
 }
 
+/**
+ * 转发请求并解密响应（可逆加密模式）
+ * @private
+ */
+_forwardWithDecryption(target, reqMethod, reqHeaders, body, res) {
+  const isHttps   = target.protocol === 'https:'
+  const transport = isHttps ? https : http
+  const port      = parseInt(target.port) || (isHttps ? 443 : 80)
+
+  const fwdHeaders = { ...reqHeaders }
+  delete fwdHeaders['x-upstream-host']
+  delete fwdHeaders['x-upstream-protocol']
+  fwdHeaders['host'] = target.hostname
+
+  const upstreamReq = transport.request(
+    { hostname: target.hostname, port, path: target.path, method: reqMethod, headers: fwdHeaders },
+    upstreamRes => {
+      const chunks = []
+      upstreamRes.on('data', chunk => chunks.push(chunk))
+      upstreamRes.on('end', () => {
+        const rawResponse = Buffer.concat(chunks)
+        
+        // 尝试解析并解密响应
+        let responseData = rawResponse
+        const contentType = upstreamRes.headers['content-type'] || ''
+        
+        if (contentType.includes('application/json')) {
+          try {
+            const parsed = JSON.parse(rawResponse.toString('utf8'))
+            const decryptResult = this._guard.decryptOutput(parsed, { source: 'http-response' })
+            responseData = Buffer.from(JSON.stringify(decryptResult.data), 'utf8')
+            
+            if (decryptResult.decryptedCount > 0) {
+              this._log('info', `响应解密完成: ${decryptResult.decryptedCount} 个 token`)
+            }
+          } catch (err) {
+            this._log('warn', `响应解密失败: ${err.message}`)
+            // 解密失败仍返回原始响应
+          }
+        }
+        
+        // 更新 content-length
+        const newHeaders = { ...upstreamRes.headers }
+        newHeaders['content-length'] = String(responseData.length)
+        
+        res.writeHead(upstreamRes.statusCode, newHeaders)
+        res.end(responseData)
+      })
+    }
+  )
+
+  upstreamReq.on('error', err => {
+    if (!res.headersSent) {
+      res.writeHead(502)
+      res.end(JSON.stringify({ error: { message: `Data Guard Proxy: upstream error: ${err.message}` } }))
+    }
+  })
+
+  upstreamReq.write(body)
+  upstreamReq.end()
+}
+
 // ── ProxyServer 类 ────────────────────────────────────────────────────────────
 
 export class ProxyServer {
@@ -159,13 +204,16 @@ export class ProxyServer {
    * @param {number}  [options.port=47291]           - 监听端口
    * @param {boolean} [options.blockOnFailure=true]  - 脱敏失败时是否阻断请求
    * @param {string}  [options.logFile]              - 日志文件路径
+   * @param {string}  [options.mode='block']         - 工作模式: 'block' | 'reversible'
    */
   constructor(options = {}) {
     this.port           = options.port           ?? DEFAULT_PORT
     this.blockOnFailure = options.blockOnFailure ?? DEFAULT_BLOCK_ON_FAIL
     this.logFile        = options.logFile        ?? null
+    this.mode           = options.mode           ?? DEFAULT_MODE
     this._server        = null
     this._logger        = options.logFile ? createLogger(options.logFile) : null
+    this._guard         = createGuard(this._logger)
   }
 
   /**
@@ -244,32 +292,40 @@ export class ProxyServer {
         return
       }
 
-      // 递归脱敏整个请求体
-      let desensitized, counter
+      // 使用统一加密入口处理请求体
+      let encryptResult
       try {
-        counter      = { n: 0 }
-        desensitized = desensitizeBody(parsed, counter)
+        encryptResult = this._guard.encryptInput(parsed, { source: 'http' })
       } catch (err) {
+        this._log('error', `加密处理失败: ${err.message}`)
         if (this.blockOnFailure) {
-          this._log('error', `脱敏失败，已阻断请求: ${err.message}`)
           res.writeHead(500)
-          res.end(JSON.stringify({ error: { message: 'Data Guard Proxy: desensitization failed, request blocked' } }))
+          res.end(JSON.stringify({ error: { message: 'Data Guard Proxy: encryption failed, request blocked' } }))
           return
         } else {
-          this._log('warn', `脱敏失败，透传原文（blockOnFailure=false）: ${err.message}`)
+          this._log('warn', `加密失败，透传原文（blockOnFailure=false）`)
           forwardRequest(target, req.method, req.headers, rawBody, res)
           return
         }
       }
 
-      if (counter.n > 0) {
-        const typesSummary = Object.entries(counter.types ?? {}).map(([k, v]) => `${k}×${v}`).join(', ')
-        this._log('info', `desensitized ${counter.n} item(s) [${typesSummary}]`)
-        const newBody    = Buffer.from(JSON.stringify(desensitized), 'utf8')
-        const newHeaders = { ...req.headers, 'content-length': String(newBody.length) }
-        forwardRequest(target, req.method, newHeaders, newBody, res)
+      // 阻断模式：如果检测到敏感数据且不允许通过
+      if (!encryptResult.allowed) {
+        this._log('error', `请求被阻断: ${encryptResult.reason}`)
+        res.writeHead(403)
+        res.end(JSON.stringify({ error: { message: `Data Guard Proxy: ${encryptResult.reason}` } }))
+        return
+      }
+
+      // 转发请求（使用加密后的数据）
+      const newBody = Buffer.from(JSON.stringify(encryptResult.data), 'utf8')
+      const newHeaders = { ...req.headers, 'content-length': String(newBody.length) }
+      
+      // 如果是可逆加密模式，需要拦截响应并解密
+      if (this.mode === 'reversible' || process.env.DATA_GUARD_MODE === 'reversible') {
+        this._forwardWithDecryption(target, req.method, newHeaders, newBody, res)
       } else {
-        forwardRequest(target, req.method, req.headers, rawBody, res)
+        forwardRequest(target, req.method, newHeaders, newBody, res)
       }
     })
 

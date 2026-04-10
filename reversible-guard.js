@@ -355,3 +355,6 @@ export {
 
 // 默认导出
 export default ReversibleGuard;
+
+// 统一加密守卫导出（从 core 模块重新导出）
+export { UnifiedEncryptionGuard, createUnifiedGuard, encryptData, decryptData } from './src/core/UnifiedEncryptionGuard.js';

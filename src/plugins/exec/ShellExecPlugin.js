@@ -41,6 +41,7 @@
 import { ToolPlugin }      from '../base/ToolPlugin.js'
 import { TempFileManager } from '../../output/TempFileManager.js'
 import { desensitizePaths } from './execUtils.js'
+import { UnifiedEncryptionGuard } from '../../core/UnifiedEncryptionGuard.js'
 
 // ── Shell / 其他语言命令检测 ──────────────────────────────────────────────────
 
@@ -114,11 +115,18 @@ function isShellReadCommand(cmd) {
 export class ShellExecPlugin extends ToolPlugin {
   /**
    * @param {string} tempDir - 临时文件目录
+   * @param {object} options - 配置选项
    */
-  constructor(tempDir) {
+  constructor(tempDir, options = {}) {
     super()
     this.tempDir     = tempDir
     this.tempManager = new TempFileManager(tempDir)
+    this.guard       = new UnifiedEncryptionGuard({
+      mode: options.mode || process.env.DATA_GUARD_MODE || 'block',
+      encryptionPassword: options.encryptionPassword || process.env.DATA_GUARD_ENCRYPTION_PASSWORD,
+      blockOnFailure: options.blockOnFailure ?? true,
+      enabledTypes: ['email', 'phone', 'idCard', 'bankCard', 'ipAddress', 'apiKey']
+    })
   }
 
   get id()   { return 'shell-exec-desensitize' }

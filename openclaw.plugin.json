@@ -33,6 +33,22 @@
         "type": "string",
         "description": "消息开头加此前缀可跳过消息文本脱敏，默认 [skip-guard]",
         "default": "[skip-guard]"
+      },
+      "mode": {
+        "type": "string",
+        "description": "工作模式：block（拦截阻断）或 reversible（可逆加密），默认 block",
+        "default": "block",
+        "enum": ["block", "reversible"]
+      },
+      "encryptionPassword": {
+        "type": "string",
+        "description": "可逆加密模式的加密密钥（仅在 mode=reversible 时使用）",
+        "default": "openclaw-data-guard-key"
+      },
+      "shellGuard": {
+        "type": "boolean",
+        "description": "是否启用 Shell exec 层脱敏（exec/process 工具中的 Shell/多语言命令），默认 true",
+        "default": true
       }
     }
   },
@@ -49,6 +65,17 @@
     },
     "pythonGuard": {
       "label": "启用 Python exec 层脱敏（exec/process 工具）"
+    },
+    "shellGuard": {
+      "label": "启用 Shell exec 层脱敏（Shell/多语言命令）"
+    },
+    "mode": {
+      "label": "工作模式",
+      "placeholder": "block 或 reversible"
+    },
+    "encryptionPassword": {
+      "label": "加密密钥（可逆加密模式）",
+      "placeholder": "your-secure-password"
     },
     "skipPrefix": {
       "label": "跳过脱敏的消息前缀",
